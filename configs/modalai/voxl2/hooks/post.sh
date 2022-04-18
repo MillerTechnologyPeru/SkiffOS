@@ -1,0 +1,58 @@
+#!/bin/bash
+set -eo pipefail
+
+IMAGES_DIR=${SKIFF_BUILDROOT_DIR}/images
+HOST_DIR=${SKIFF_BUILDROOT_DIR}/host
+SYSFS_DIR=${SKIFF_BUILDROOT_DIR}/extra_images/sysfs
+BOOT_DIR=${SYSFS_DIR}/boot
+ROOTFS_DIR=${BOOT_DIR}
+SKIFF_IMAGE=${IMAGES_DIR}/apq8096-sysfs.ext4.img
+SPARSE_SKIFF_IMAGE=${IMAGES_DIR}/apq8096-sysfs.ext4
+
+if [ -f ${SKIFF_IMAGE} ]; then
+    rm -f ${SKIFF_IMAGE}
+fi
+if [ -f ${SPARSE_SKIFF_IMAGE} ]; then
+    rm -f ${SPARSE_SKIFF_IMAGE} || true
+fi
+
+mkdir -p ${SYSFS_DIR}
+cd ${SYSFS_DIR}
+mkdir -p bin dev etc lib mnt proc sbin sys tmp var
+
+cd ${IMAGES_DIR}
+mkdir -p ${BOOT_DIR}/skiff-init ${ROOTFS_DIR}/
+if [ -d ${IMAGES_DIR}/rootfs_part/ ]; then
+    rsync -rav ${IMAGES_DIR}/rootfs_part/ ${ROOTFS_DIR}/
+fi
+if [ -d ${IMAGES_DIR}/persist_part/ ]; then
+    rsync -rav ${IMAGES_DIR}/persist_part/ ${SYSFS_DIR}/
+fi
+rsync -rv ./skiff-init/ ${BOOT_DIR}/skiff-init/
+cp ${SKIFF_CURRENT_CONF_DIR}/resources/resize2fs.conf ./skiff-init/resize2fs.conf
+rsync -rv \
+  ./*.dtb ./*Image* \
+  ./skiff-release ./rootfs.squashfs \
+  ${BOOT_DIR}/
+
+# boot symlinks
+ln -fs /boot/skiff-init/skiff-init-squashfs ${SYSFS_DIR}/init
+ln -fs /boot/skiff-init/skiff-init-squashfs ${SYSFS_DIR}/sbin/init
+mkdir -p ${SYSFS_DIR}/lib/systemd
+ln -fs /boot/skiff-init/skiff-init-squashfs ${SYSFS_DIR}/lib/systemd/systemd
+
+# create sysfs.ext4
+echo "Building raw image..."
+${HOST_DIR}/sbin/mkfs.ext4 \
+           -d ${SYSFS_DIR} \
+           -L "sysfs" \
+           -U "57f8f4bc-abf4-655f-bf67-946fc0f9f25b" \
+           ${SKIFF_IMAGE} "2G"
+# make it sparse
+echo "Converting raw image to sparse image..."
+${HOST_DIR}/bin/img2simg \
+           ${SKIFF_IMAGE} \
+           ${SPARSE_SKIFF_IMAGE}
+# delete old raw image
+echo "Done, deleting raw image..."
+rm ${SKIFF_IMAGE} || true
